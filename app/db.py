@@ -69,9 +69,29 @@ def add_signal(p, opp, risk, parts, explanation):
 
 def top_signals(limit=25):
     with conn() as c:
-        return c.execute("""SELECT s.*,t.symbol,t.name,t.price_usd,t.liquidity,t.volume_24h,t.market_cap,t.image_url,t.source_url,t.price_change_1h,t.price_change_24h
-        FROM signals s JOIN tokens t ON t.token_address=s.token_address
-        ORDER BY s.opportunity_score DESC, s.risk_score ASC, s.timestamp DESC LIMIT ?""", (limit,)).fetchall()
+        # signals has no created_at column (only tokens does) — s.timestamp is the
+        # signal row's actual creation time and plays that role here.
+        return c.execute("""
+        WITH ranked AS (
+          SELECT s.id, s.timestamp, s.token_address, s.pair_address, s.bucket,
+                 s.opportunity_score, s.risk_score, s.momentum, s.volume_anomaly,
+                 s.trading_activity, s.holder_growth, s.buy_pressure, s.liquidity_quality,
+                 s.market_environment, s.security_score, s.entry_price, s.explanation,
+                 ROW_NUMBER() OVER (PARTITION BY s.token_address ORDER BY s.timestamp DESC, s.id DESC) AS rn
+          FROM signals s
+        )
+        SELECT r.id, r.timestamp, r.token_address, r.pair_address, r.bucket,
+               r.opportunity_score, r.risk_score, r.momentum, r.volume_anomaly,
+               r.trading_activity, r.holder_growth, r.buy_pressure, r.liquidity_quality,
+               r.market_environment, r.security_score, r.entry_price, r.explanation,
+               t.symbol, t.name, t.price_usd, t.liquidity, t.volume_24h, t.market_cap,
+               t.image_url, t.source_url, t.price_change_1h, t.price_change_24h
+        FROM ranked r
+        JOIN tokens t ON t.token_address = r.token_address
+        WHERE r.rn = 1
+        ORDER BY r.opportunity_score DESC, r.risk_score ASC, r.timestamp DESC
+        LIMIT ?
+        """, (limit,)).fetchall()
 
 def token_history(address, limit=100):
     with conn() as c:
